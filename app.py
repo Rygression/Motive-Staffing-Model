@@ -59,10 +59,6 @@ with st.sidebar:
     )
     reset_mid = st.button("Reset to Baseline (Midpoint)")
 
-    st.markdown("---")
-    st.subheader("Default Bounds (edits per team below)")
-    max_monthly_hires = st.number_input("Max monthly hires slider bound", 0, 200, 50)
-    max_starting_hc   = st.number_input("Max starting HC slider bound", 0, 1000, 400)
 
 # ------------------------------
 # SESSION STATE PRESETS
