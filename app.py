@@ -11,6 +11,10 @@ st.set_page_config(page_title="Headcount Growth Model", layout="wide")
 st.title("👥 Interactive Headcount Growth Model")
 st.caption("Monthly HC simulation with hires, attrition, promotions, team & segment subtotals through Dec 2026. Includes Conservative/Aggressive presets and a Baseline (midpoint) reset.")
 
+# Slider limit constants (no UI for these)
+MAX_MONTHLY_HIRES = 200
+MAX_STARTING_HC = 1000
+
 # Teams ordered by promotion ladder
 TEAM_LADDER = [
     {"team": "1-2 AM",     "dest": "3-4 AM",    "start": 10, "hires": 1,  "goal_2026": 20,  "attr%": 2.0, "promo_qtr_range": (0, 10)},
@@ -39,6 +43,24 @@ MID_PROMOS   = {t: (LOW_PROMOS[t] + HIGH_PROMOS[t]) / 2 for t in LOW_PROMOS}
 # ------------------------------
 with st.sidebar:
     st.header("Global Settings")
+
+    # ---- NEW: Master reset (top of admin controls) ----
+    def _reset_all_sliders_to_initial():
+        # Reset all team sliders back to initial assumptions
+        for row in TEAM_LADDER:
+            t = row["team"]
+            st.session_state[f"{t}_start"] = row["start"]
+            st.session_state[f"{t}_hires"] = row["hires"]
+            st.session_state[f"{t}_attr"]  = float(row["attr%"])     # percent
+            st.session_state[f"{t}_promo"] = float(MID_PROMOS[t])     # percent (midpoint baseline)
+        # Reset presets tracking to Custom so nothing auto-applies
+        st.session_state["preset_mode"] = "Custom"
+        st.session_state["_last_preset"] = "Custom"
+
+    if st.button("↩️ Reset ALL sliders to initial assumptions", type="primary"):
+        _reset_all_sliders_to_initial()
+        st.rerun()
+
     start_month = st.date_input("Model Start Month", value=dt.date(2025, 11, 1))
     end_month = dt.date(2026, 12, 1)
     if start_month > end_month:
@@ -52,17 +74,14 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("Assumption Presets (Quarterly Promotion %)")
+    # add a key so we can change it from reset()
     preset = st.radio(
         "Preset",
         ["Custom", "Conservative (low)", "Aggressive (high)"],
+        key="preset_mode",
         help="Only Quarterly Promotion % has explicit ranges in the brief; other inputs remain as set."
     )
     reset_mid = st.button("Reset to Baseline (Midpoint)")
-
-    st.markdown("---")
-    st.subheader("Default Bounds (edits per team below)")
-    max_monthly_hires = st.number_input("Max monthly hires slider bound", 0, 200, 50)
-    max_starting_hc   = st.number_input("Max starting HC slider bound", 0, 1000, 400)
 
 # ------------------------------
 # SESSION STATE PRESETS
@@ -82,12 +101,12 @@ def _apply_preset(kind: str):
             st.session_state[key] = float(MID_PROMOS[r["team"]])
 
 # Auto-apply radio preset
-if preset != st.session_state["_last_preset"]:
-    if preset.startswith("Conservative"):
+if st.session_state["preset_mode"] != st.session_state["_last_preset"]:
+    if st.session_state["preset_mode"].startswith("Conservative"):
         _apply_preset("low")
-    elif preset.startswith("Aggressive"):
+    elif st.session_state["preset_mode"].startswith("Aggressive"):
         _apply_preset("high")
-    st.session_state["_last_preset"] = preset
+    st.session_state["_last_preset"] = st.session_state["preset_mode"]
 
 # Apply explicit reset to midpoint (doesn't change preset label)
 if reset_mid:
@@ -115,8 +134,8 @@ for row in TEAM_LADDER:
     if promo_key not in st.session_state: st.session_state[promo_key] = float(MID_PROMOS[t]) # start midpoint
 
     with st.sidebar.expander(f"{t}  →  {dest or 'n/a'}", expanded=False):
-        start_val = st.slider(f"[{t}] Starting HC", 0, max_starting_hc, int(st.session_state[start_key]), key=start_key)
-        hires_val = st.slider(f"[{t}] Monthly Hires", 0, max_monthly_hires, int(st.session_state[hires_key]), key=hires_key)
+        start_val = st.slider(f"[{t}] Starting HC", 0, MAX_STARTING_HC, int(st.session_state[start_key]), key=start_key)
+        hires_val = st.slider(f"[{t}] Monthly Hires", 0, MAX_MONTHLY_HIRES, int(st.session_state[hires_key]), key=hires_key)
         attr_val  = st.slider(f"[{t}] Monthly Attrition (%)", 0.0, 10.0, float(st.session_state[attr_key]), step=0.5, key=attr_key)
 
         low, high = row["promo_qtr_range"]
@@ -185,8 +204,7 @@ for mi, month in enumerate(months, start=1):
     # snapshot
     month_label = month.strftime("%b %Y")
     snap = {"Month": month, "MonthLabel": month_label, "MonthOrder": mi}
-    for t in current:
-        snap[t] = int(max(0, current[t]))
+    for t in current: snap[t] = int(max(0, current[t]))
     # segment subtotals
     snap["SMB"]  = int(sum(snap[t] for t in SMB_TEAMS))
     snap["CMRL"] = int(sum(snap[t] for t in CMRL_TEAMS))
@@ -239,17 +257,17 @@ with left:
             x=x_enc,
             y=alt.Y("Headcount:Q", title="Headcount"),
             color=alt.Color(
-    "Team:N",
-    scale=alt.Scale(domain=TEAM_ORDER),
-    legend=alt.Legend(
-        title="Team",
-        orient="bottom",
-        direction="horizontal",
-        columns=8,
-        labelLimit=1800,  # 👈 prevents Altair from wrapping labels
-        symbolLimit=200
-    )
-),
+                "Team:N",
+                scale=alt.Scale(domain=TEAM_ORDER),
+                legend=alt.Legend(
+                    title="Team",
+                    orient="bottom",
+                    direction="horizontal",
+                    columns=8,
+                    labelLimit=1800,
+                    symbolLimit=200
+                )
+            ),
             order=alt.Order("TeamOrder:Q")
         )
     )
@@ -277,18 +295,16 @@ with left:
     ).configure_legend(
         orient="bottom",
         direction="horizontal",
-        columns=8,           # 👈 8 columns, 1 row
+        columns=8,
         labelFontSize=11,
         titleFontSize=12,
         symbolLimit=200,
         padding=0,
         symbolSize=80,
-        labelLimit=1800      # 👈 allow legend to extend fully across the container
+        labelLimit=1800
     )
 
-    # keep container width so it fits the column responsively
     st.altair_chart(combined_chart, use_container_width=True)
-
 
 # ---- KPI panel: ladder order + SMB/CMRL/MM subtotals + Total (no double counting) ----
 with right:
@@ -380,6 +396,7 @@ else:
 with st.expander("Model Notes & Assumptions"):
     st.markdown("""
 - **Presets:** Conservative/Aggressive toggle sets all **Quarterly Promotion %** to each team's low/high bound. **Reset to Baseline** sets each to its midpoint.
+- **Master Reset:** “Reset ALL sliders” returns **every team slider** to the initial baseline (starts/hires/attr from the brief; promos to midpoint) and sets Preset back to **Custom**.
 - **Rounding:** All headcount math rounds **down to whole people** after each step.
 - **Order per month:** (1) Hires → (2) Attrition → (3) Promotions (if promo month).
 - **Segments:** Monthly **SMB/CMRL/MM** subtotals are shown.
